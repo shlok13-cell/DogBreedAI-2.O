@@ -47,9 +47,14 @@ def load_model_and_labels(
             f"Breed label file not found at {breeds_path}. Train and save the model by running main.py first."
         )
 
+    custom_objects = {
+        "KerasLayer": hub.KerasLayer,
+        "hub>KerasLayer": hub.KerasLayer,
+        "tensorflow_hub>KerasLayer": hub.KerasLayer,
+    }
     model = keras.models.load_model(
         model_path,
-        custom_objects={"KerasLayer": hub.KerasLayer},
+        custom_objects=custom_objects,
     )
     breeds = np.load(breeds_path, allow_pickle=True)
     return model, breeds

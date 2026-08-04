@@ -5,6 +5,9 @@ Run with:
 """
 
 import os
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import streamlit as st
 from PIL import Image
 
@@ -14,9 +17,6 @@ from model_loader import load_model_and_labels
 from prediction import get_top_k_predictions, get_top_prediction_index, predict_breed
 from preprocessing import preprocess_image
 from utils import format_breed_name, format_file_size
-
-# Suppress TensorFlow logging
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 
 def main() -> None:
