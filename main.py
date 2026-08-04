@@ -12,6 +12,17 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import tf_keras as keras
+# Fallback shim for pkg_resources required by tensorflow_hub
+try:
+    import pkg_resources
+except ImportError:
+    import sys
+    import types
+    from packaging import version
+    _pkg_resources = types.ModuleType("pkg_resources")
+    _pkg_resources.parse_version = version.parse
+    sys.modules["pkg_resources"] = _pkg_resources
+
 import tensorflow_hub as hub
 from matplotlib import pyplot as plt
 from matplotlib.pyplot import imread

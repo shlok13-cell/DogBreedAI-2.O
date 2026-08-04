@@ -5,6 +5,17 @@ from typing import Tuple
 
 import numpy as np
 import streamlit as st
+# Fallback shim for pkg_resources required by tensorflow_hub in modern Python environments
+try:
+    import pkg_resources
+except ImportError:
+    import sys
+    import types
+    from packaging import version
+    _pkg_resources = types.ModuleType("pkg_resources")
+    _pkg_resources.parse_version = version.parse
+    sys.modules["pkg_resources"] = _pkg_resources
+
 import tensorflow_hub as hub
 import tf_keras as keras
 
