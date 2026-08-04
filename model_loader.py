@@ -1,6 +1,9 @@
 """Model loading utilities for the Dog Breed Classifier."""
 
 import os
+# Enable legacy Keras (Keras 2) compatibility – prevents 'optional' arg errors
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
 from typing import Tuple
 
 import numpy as np
@@ -8,6 +11,12 @@ import streamlit as st
 import tensorflow_hub as hub
 import tf_keras as keras
 import tf_keras.layers as tf_layers
+
+# The URL of the TensorFlow Hub module used during training.
+# Replace this with the exact URL that was used when the model was created.
+HUB_MODULE_URL = "https://tfhub.dev/google/imagenet/mobilenet_v2_140_224/feature_vector/5"
+# Load (or cache) the module so its variables are available when the saved model is deserialized.
+_ = hub.KerasLayer(HUB_MODULE_URL, trainable=False)
 # Patch InputLayer.from_config to strip Keras 3 'optional' argument
 _orig_input_from_config = tf_layers.InputLayer.from_config
 def _patched_input_from_config(config):
