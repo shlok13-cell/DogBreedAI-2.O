@@ -8,6 +8,14 @@ import streamlit as st
 import tensorflow_hub as hub
 import tf_keras as keras
 import tf_keras.layers as tf_layers
+# Patch InputLayer.from_config to strip Keras 3 'optional' argument
+_orig_input_from_config = tf_layers.InputLayer.from_config
+def _patched_input_from_config(config):
+    if isinstance(config, dict):
+        config.pop('optional', None)
+    return _orig_input_from_config(config)
+tf_layers.InputLayer.from_config = _patched_input_from_config
+
 from utils import BREEDS_PATH, MODEL_PATH
 
 
