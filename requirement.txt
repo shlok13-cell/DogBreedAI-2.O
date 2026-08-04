@@ -2,6 +2,7 @@ streamlit
 tensorflow
 tf-keras
 tensorflow-hub==0.16.1
+setuptools
 numpy
 pandas
 pillow
