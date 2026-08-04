@@ -1,6 +1,6 @@
 streamlit
-tensorflow==2.21.0
-tf-keras==2.21.0
+tensorflow-cpu
+tf-keras
 tensorflow-hub==0.16.1
 numpy
 pandas
