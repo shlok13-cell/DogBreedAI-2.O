@@ -12,8 +12,18 @@ import tensorflow_hub as hub
 import tf_keras as keras
 import tf_keras.layers as tf_layers
 
+# Pre-register KerasLayer in both tf_keras and standard Keras global custom object registries
+keras.utils.get_custom_objects()["KerasLayer"] = hub.KerasLayer
+keras.utils.get_custom_objects()["keras_layer"] = hub.KerasLayer
+
+try:
+    import keras as _k3
+    _k3.utils.get_custom_objects()["KerasLayer"] = hub.KerasLayer
+    _k3.utils.get_custom_objects()["keras_layer"] = hub.KerasLayer
+except Exception:
+    pass
+
 # The URL of the TensorFlow Hub module used during training.
-# Replace this with the exact URL that was used when the model was created.
 HUB_MODULE_URL = "https://tfhub.dev/google/imagenet/mobilenet_v2_140_224/feature_vector/5"
 # Load (or cache) the module so its variables are available when the saved model is deserialized.
 _ = hub.KerasLayer(HUB_MODULE_URL, trainable=False)
