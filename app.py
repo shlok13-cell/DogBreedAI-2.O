@@ -5,60 +5,38 @@ Run with:
 """
 
 import os
-from typing import Tuple
-
-import numpy as np
 import streamlit as st
-import tensorflow as tf
-import tensorflow_hub as hub
-import tf_keras as keras
 from PIL import Image
 
-# Suppress TensorFlow and TensorFlow Hub logging
+from gemini_service import chat_with_breed_expert, get_breed_info
+from gradcam import generate_gradcam_explanation
+from model_loader import load_model_and_labels
+from prediction import get_top_k_predictions, get_top_prediction_index, predict_breed
+from preprocessing import preprocess_image
+from utils import format_breed_name, format_file_size
+
+# Suppress TensorFlow logging
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-tf.get_logger().setLevel("ERROR")
-
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "dog_breed_model.keras")
-BREEDS_PATH = os.path.join(BASE_DIR, "dog_breeds.npy")
-IMG_SIZE = 224
-
-
-@st.cache_resource(show_spinner=True)
-def load_model_and_labels() -> Tuple[keras.Model, np.ndarray]:
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(
-            f"Model file not found at {MODEL_PATH}. Train and save the model by running main.py first."
-        )
-    if not os.path.exists(BREEDS_PATH):
-        raise FileNotFoundError(
-            f"Breed label file not found at {BREEDS_PATH}. Train and save the model by running main.py first."
-        )
-
-    model = keras.models.load_model(
-        MODEL_PATH,
-        custom_objects={"KerasLayer": hub.KerasLayer},
-    )
-    breeds = np.load(BREEDS_PATH, allow_pickle=True)
-    return model, breeds
-
-
-def preprocess_image(image: Image.Image) -> tf.Tensor:
-    image = image.convert("RGB")
-    image = image.resize((IMG_SIZE, IMG_SIZE))
-    img_array = np.array(image).astype("float32") / 255.0
-    return tf.expand_dims(img_array, axis=0)  # shape (1, H, W, 3)
 
 
 def main() -> None:
     # Page configuration
     st.set_page_config(
-        page_title="Dog Breed Classifier AI",
+        page_title="Dog Breed Classifier AI Dashboard",
         page_icon="🐶",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
+
+    # Initialize all session state variables for persistent state across reruns
+    if "analysis_results" not in st.session_state:
+        st.session_state.analysis_results = None
+    if "uploaded_file_id" not in st.session_state:
+        st.session_state.uploaded_file_id = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "chat_breed" not in st.session_state:
+        st.session_state.chat_breed = None
 
     # Premium AI SaaS UI Styling
     st.markdown(
@@ -81,7 +59,7 @@ def main() -> None:
         .block-container {
             padding-top: 2rem !important;
             padding-bottom: 3rem !important;
-            max-width: 1080px !important;
+            max-width: 1120px !important;
         }
 
         /* Header / Navigation elements cleanup */
@@ -94,12 +72,12 @@ def main() -> None:
 
         /* Hero Section Container */
         .hero-card {
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.85) 0%, rgba(238, 242, 255, 0.75) 100%);
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(238, 242, 255, 0.78) 100%);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.95);
             border-radius: 28px;
-            padding: 3rem 2rem;
+            padding: 2.75rem 2rem;
             text-align: center;
             box-shadow: 0 20px 40px -15px rgba(99, 102, 241, 0.12), 0 0 0 1px rgba(99, 102, 241, 0.05);
             margin-bottom: 2rem;
@@ -139,17 +117,17 @@ def main() -> None:
             font-size: 1.15rem;
             color: #475569;
             font-weight: 500;
-            max-width: 620px;
+            max-width: 640px;
             margin: 0 auto;
             line-height: 1.6;
         }
 
         /* Glass Cards */
         .glass-card {
-            background: rgba(255, 255, 255, 0.78);
+            background: rgba(255, 255, 255, 0.82);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.9);
             box-shadow: 0 10px 30px -5px rgba(99, 102, 241, 0.06), 0 4px 12px rgba(0, 0, 0, 0.02);
             border-radius: 24px;
             padding: 1.75rem;
@@ -158,8 +136,99 @@ def main() -> None:
         }
 
         .glass-card:hover {
-            box-shadow: 0 18px 38px -10px rgba(99, 102, 241, 0.12), 0 8px 20px rgba(0, 0, 0, 0.03);
+            box-shadow: 0 18px 38px -10px rgba(99, 102, 241, 0.14), 0 8px 20px rgba(0, 0, 0, 0.03);
             transform: translateY(-2px);
+        }
+
+        /* STREAMLIT TAB STYLING FOR AI DASHBOARD (ISSUE 2) */
+        div[data-baseweb="tab-list"] {
+            gap: 0.65rem !important;
+            background: rgba(255, 255, 255, 0.85) !important;
+            backdrop-filter: blur(16px) !important;
+            -webkit-backdrop-filter: blur(16px) !important;
+            padding: 0.5rem !important;
+            border-radius: 20px !important;
+            border: 1px solid rgba(226, 232, 240, 0.9) !important;
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.08) !important;
+            margin-bottom: 1.75rem !important;
+        }
+
+        /* Inactive Tab Base Button */
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"] {
+            height: 48px !important;
+            border-radius: 14px !important;
+            font-weight: 600 !important;
+            font-size: 0.95rem !important;
+            color: #334155 !important;
+            -webkit-text-fill-color: #334155 !important;
+            border: none !important;
+            padding: 0 1.35rem !important;
+            background: rgba(241, 245, 249, 0.85) !important;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+
+        /* Target all text elements inside inactive tabs */
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"] *,
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"] p,
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"] span,
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"] div {
+            color: #334155 !important;
+            -webkit-text-fill-color: #334155 !important;
+            font-weight: 600 !important;
+            opacity: 1 !important;
+        }
+
+        /* Hover State */
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"]:hover {
+            color: #4F46E5 !important;
+            -webkit-text-fill-color: #4F46E5 !important;
+            background: rgba(99, 102, 241, 0.12) !important;
+        }
+
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"]:hover *,
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"]:hover p,
+        div[data-baseweb="tab-list"] button[data-baseweb="tab"]:hover span {
+            color: #4F46E5 !important;
+            -webkit-text-fill-color: #4F46E5 !important;
+        }
+
+        /* Active Selected Tab */
+        div[data-baseweb="tab-list"] button[aria-selected="true"][data-baseweb="tab"] {
+            background: linear-gradient(135deg, #4F46E5 0%, #6366F1 50%, #8B5CF6 100%) !important;
+            color: #FFFFFF !important;
+            -webkit-text-fill-color: #FFFFFF !important;
+            box-shadow: 0 8px 20px -4px rgba(79, 70, 229, 0.4) !important;
+        }
+
+        /* Target all text elements inside active tab */
+        div[data-baseweb="tab-list"] button[aria-selected="true"][data-baseweb="tab"] *,
+        div[data-baseweb="tab-list"] button[aria-selected="true"][data-baseweb="tab"] p,
+        div[data-baseweb="tab-list"] button[aria-selected="true"][data-baseweb="tab"] span,
+        div[data-baseweb="tab-list"] button[aria-selected="true"][data-baseweb="tab"] div {
+            color: #FFFFFF !important;
+            -webkit-text-fill-color: #FFFFFF !important;
+            font-weight: 800 !important;
+            opacity: 1 !important;
+        }
+
+        /* AI ASSISTANT CHAT MESSAGE TEXT COLOR FIX (ISSUE 1) */
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] *,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] p,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h1,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h2,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h3,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h4,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h5,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h6,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] ul,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] ol,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] li,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] strong,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] em,
+        div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] a,
+        div[data-testid="stChatMessageContent"] * {
+            color: #0F172A !important;
+            -webkit-text-fill-color: #0F172A !important;
         }
 
         /* STREAMLIT FILE UPLOADER SPECIFIC SCOPED STYLING */
@@ -168,7 +237,6 @@ def main() -> None:
             margin-bottom: 1.5rem !important;
         }
 
-        /* Main Dropzone Section Container */
         div[data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"],
         div[data-testid="stFileUploader"] > section {
             background: rgba(255, 255, 255, 0.85) !important;
@@ -196,7 +264,6 @@ def main() -> None:
             transform: translateY(-2px);
         }
 
-        /* SVG Upload Icon */
         div[data-testid="stFileUploader"] section svg {
             width: 48px !important;
             height: 48px !important;
@@ -212,7 +279,6 @@ def main() -> None:
             fill: #4F46E5 !important;
         }
 
-        /* Uploader Text inside dropzone */
         div[data-testid="stFileUploader"] section span,
         div[data-testid="stFileUploader"] section p,
         div[data-testid="stFileUploader"] section div {
@@ -229,7 +295,6 @@ def main() -> None:
             text-align: center !important;
         }
 
-        /* Inner Browse Button inside Dropzone ONLY */
         div[data-testid="stFileUploaderDropzone"] button,
         div[data-testid="stFileUploader"] section button[data-testid="stBaseButton-secondary"] {
             background: #EEF2FF !important;
@@ -259,108 +324,7 @@ def main() -> None:
             transform: translateY(-1px) !important;
         }
 
-        div[data-testid="stFileUploaderDropzone"] button p,
-        div[data-testid="stFileUploader"] section button[data-testid="stBaseButton-secondary"] p {
-            color: inherit !important;
-            font-weight: 700 !important;
-            font-size: 0.9rem !important;
-            margin: 0 !important;
-        }
-
-        /* LIGHT PREVIEW FILE CARD (NO BLACK BOXES) */
-        div[data-testid="stFileUploaderFile"],
-        div[data-testid="stFileUploaderFileData"],
-        section[data-testid="stFileUploaderFileData"] {
-            background: #FFFFFF !important;
-            border: 1px solid #E2E8F0 !important;
-            border-radius: 16px !important;
-            padding: 0.85rem 1.25rem !important;
-            margin-top: 0.75rem !important;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03) !important;
-            color: #0F172A !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: space-between !important;
-        }
-
-        div[data-testid="stFileUploaderFile"] *,
-        div[data-testid="stFileUploaderFileData"] * {
-            color: #0F172A !important;
-            background: transparent !important;
-        }
-
-        div[data-testid="stFileUploaderFileName"] {
-            color: #0F172A !important;
-            font-weight: 700 !important;
-            font-size: 0.95rem !important;
-        }
-
-        /* ELEGANT COMPACT REMOVE (X) BUTTON */
-        div[data-testid="stFileUploaderFile"] button,
-        button[data-testid="stFileUploaderDeleteFile"],
-        button[aria-label="Remove file"] {
-            background: #F1F5F9 !important;
-            color: #64748B !important;
-            border: 1px solid #CBD5E1 !important;
-            border-radius: 50% !important;
-            width: 32px !important;
-            height: 32px !important;
-            min-width: 32px !important;
-            min-height: 32px !important;
-            max-width: 32px !important;
-            max-height: 32px !important;
-            padding: 0 !important;
-            margin: 0 0 0 0.75rem !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            box-shadow: none !important;
-            cursor: pointer !important;
-            transition: all 0.2s ease !important;
-            flex-shrink: 0 !important;
-        }
-
-        div[data-testid="stFileUploaderFile"] button:hover,
-        button[data-testid="stFileUploaderDeleteFile"]:hover,
-        button[aria-label="Remove file"]:hover {
-            background: #FEE2E2 !important;
-            color: #EF4444 !important;
-            border-color: #FCA5A5 !important;
-            transform: scale(1.08) !important;
-            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.2) !important;
-        }
-
-        div[data-testid="stFileUploaderFile"] button svg,
-        button[data-testid="stFileUploaderDeleteFile"] svg,
-        button[aria-label="Remove file"] svg {
-            width: 16px !important;
-            height: 16px !important;
-            fill: currentColor !important;
-            color: currentColor !important;
-        }
-
-        /* ADD FILE (+) BUTTON STYLING (IF PRESENT) */
-        button[data-testid="stFileUploaderAddFile"] {
-            background: #EEF2FF !important;
-            color: #4F46E5 !important;
-            border: 1px solid #C7D2FE !important;
-            border-radius: 12px !important;
-            padding: 0.4rem 0.85rem !important;
-            font-size: 0.85rem !important;
-            font-weight: 700 !important;
-            width: auto !important;
-            height: auto !important;
-            min-width: auto !important;
-            min-height: auto !important;
-            box-shadow: none !important;
-        }
-
-        button[data-testid="stFileUploaderAddFile"]:hover {
-            background: #4F46E5 !important;
-            color: #FFFFFF !important;
-        }
-
-        /* DIRECT ANALYZE BREED BUTTON TARGETING (OVERRIDE STREAMLIT DARK THEME) */
+        /* ANALYZE BREED BUTTON TARGETING */
         div[data-testid="stButton"] > button,
         div.stButton > button,
         div[data-testid="stButton"] button[kind="secondary"],
@@ -383,31 +347,12 @@ def main() -> None:
             justify-content: center !important;
         }
 
-        /* FORCE ALL TEXT INSIDE ANALYZE BUTTON TO BE PURE WHITE */
-        div[data-testid="stButton"] > button *,
-        div.stButton > button *,
-        div[data-testid="stButton"] > button p,
-        div[data-testid="stButton"] > button span,
-        div[data-testid="stButton"] > button div {
-            color: #FFFFFF !important;
-            -webkit-text-fill-color: #FFFFFF !important;
-            font-weight: 700 !important;
-            font-size: 1.15rem !important;
-        }
-
         div[data-testid="stButton"] > button:hover,
-        div.stButton > button:hover,
-        div[data-testid="stButton"] button[kind="secondary"]:hover {
+        div.stButton > button:hover {
             background: linear-gradient(135deg, #4338CA 0%, #4F46E5 50%, #7C3AED 100%) !important;
             color: #FFFFFF !important;
-            -webkit-text-fill-color: #FFFFFF !important;
             box-shadow: 0 16px 35px -4px rgba(99, 102, 241, 0.6) !important;
             transform: translateY(-3px) scale(1.01) !important;
-        }
-
-        div[data-testid="stButton"] > button:active,
-        div.stButton > button:active {
-            transform: translateY(-1px) scale(0.98) !important;
         }
 
         /* Streamlit Progress Bar Enhancement */
@@ -422,7 +367,37 @@ def main() -> None:
             background-color: rgba(226, 232, 240, 0.8) !important;
         }
 
-        /* Custom Keyframe Animations */
+        /* STREAMLIT CHAT INPUT STYLING (WHITE TEXT, PLACEHOLDER, AND CARET) */
+        div[data-testid="stChatInput"] textarea,
+        div[data-testid="stChatInput"] input,
+        div[data-baseweb="textarea"] textarea,
+        div[data-baseweb="base-input"] textarea {
+            color: #FFFFFF !important;
+            -webkit-text-fill-color: #FFFFFF !important;
+            caret-color: #FFFFFF !important;
+        }
+
+        div[data-testid="stChatInput"] textarea::placeholder,
+        div[data-testid="stChatInput"] input::placeholder,
+        div[data-baseweb="textarea"] textarea::placeholder {
+            color: rgba(255, 255, 255, 0.85) !important;
+            -webkit-text-fill-color: rgba(255, 255, 255, 0.85) !important;
+            opacity: 1 !important;
+        }
+
+        div[data-testid="stChatInput"] textarea::-webkit-input-placeholder,
+        div[data-testid="stChatInput"] input::-webkit-input-placeholder {
+            color: rgba(255, 255, 255, 0.85) !important;
+            -webkit-text-fill-color: rgba(255, 255, 255, 0.85) !important;
+            opacity: 1 !important;
+        }
+
+        div[data-testid="stChatInput"] textarea::-moz-placeholder,
+        div[data-testid="stChatInput"] input::-moz-placeholder {
+            color: rgba(255, 255, 255, 0.85) !important;
+            opacity: 1 !important;
+        }
+
         @keyframes fadeInDown {
             from {
                 opacity: 0;
@@ -438,16 +413,16 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # Hero Section
+    # Hero Section Banner
     st.markdown(
         """
         <div class="hero-card">
             <div class="hero-badge">
-                ✨ Deep Learning Vision Intelligence
+                ✨ Executive AI Dashboard
             </div>
             <h1 class="hero-title">🐶 Dog Breed Classifier AI</h1>
             <p class="hero-subtitle">
-                Identify dog breeds with high precision using MobileNetV2 and TensorFlow transfer learning.
+                Identify dog breeds, analyze spatial features with Grad-CAM, explore AI breed intelligence, and chat with your canine AI assistant.
             </p>
         </div>
         """,
@@ -490,6 +465,14 @@ def main() -> None:
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
         
+        # Track uploaded file state to clear session state only when a new image is selected
+        current_file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+        if st.session_state.uploaded_file_id != current_file_id:
+            st.session_state.uploaded_file_id = current_file_id
+            st.session_state.analysis_results = None
+            st.session_state.chat_history = []
+            st.session_state.chat_breed = None
+
         # Image Preview & Information Cards
         col1, col2 = st.columns([1.1, 0.9], gap="medium")
 
@@ -507,11 +490,7 @@ def main() -> None:
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col2:
-            file_size_bytes = uploaded_file.size
-            if file_size_bytes < 1024 * 1024:
-                file_size_str = f"{file_size_bytes / 1024:.1f} KB"
-            else:
-                file_size_str = f"{file_size_bytes / (1024 * 1024):.2f} MB"
+            file_size_str = format_file_size(uploaded_file.size)
 
             st.markdown(
                 f"""
@@ -561,8 +540,8 @@ def main() -> None:
                     """
                     <div class="glass-card" style="text-align: center; padding: 2.5rem 1.5rem; margin-top: 1rem;">
                         <div style="width: 50px; height: 50px; border: 4px solid rgba(99, 102, 241, 0.15); border-top: 4px solid #6366F1; border-radius: 50%; animation: spin 0.9s linear infinite; margin: 0 auto 1.25rem auto;"></div>
-                        <h4 style="font-size: 1.25rem; font-weight: 800; color: #1E293B; margin-bottom: 0.4rem;">🧠 AI is analyzing your image...</h4>
-                        <p style="color: #64748B; font-size: 0.9rem;">Extracting visual features & computing classification probabilities</p>
+                        <h4 style="font-size: 1.25rem; font-weight: 800; color: #1E293B; margin-bottom: 0.4rem;">🧠 AI Dashboard is computing predictions...</h4>
+                        <p style="color: #64748B; font-size: 0.9rem;">Processing features, computing Grad-CAM, and fetching Gemini intelligence</p>
                     </div>
                     <style>
                         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -571,30 +550,55 @@ def main() -> None:
                     unsafe_allow_html=True,
                 )
 
-            # Model Inference
+            # Model Inference & Post-processing
             input_tensor = preprocess_image(image)
-            preds = model.predict(input_tensor, verbose=0)[0]  # shape (num_classes,)
+            preds = predict_breed(model, input_tensor)
+            top_breeds, top_scores = get_top_k_predictions(preds, breeds, top_k=5)
+            top_class_index = get_top_prediction_index(preds)
 
-            # Top 5 predictions
-            top_k = 5
-            top_indices = preds.argsort()[::-1][:top_k]
-            top_breeds = breeds[top_indices]
-            top_scores = preds[top_indices]
+            # Generate Grad-CAM Visual Explanation
+            gradcam_explanation_image = generate_gradcam_explanation(
+                model=model,
+                input_tensor=input_tensor,
+                target_class_index=top_class_index,
+                original_image=image,
+            )
 
             loading_placeholder.empty()
 
-            # Top Prediction Hero Card
             top_breed_raw = top_breeds[0]
-            top_breed_formatted = str(top_breed_raw).replace("_", " ").title()
+            top_breed_formatted = format_breed_name(top_breed_raw)
+
+            # Save complete prediction package in st.session_state for persistence across reruns
+            st.session_state.analysis_results = {
+                "top_breed_formatted": top_breed_formatted,
+                "top_breeds": top_breeds,
+                "top_scores": top_scores,
+                "top_class_index": top_class_index,
+                "gradcam_explanation_image": gradcam_explanation_image,
+                "image": image,
+            }
+            st.session_state.chat_history = []
+            st.session_state.chat_breed = top_breed_formatted
+
+        # Persistent Dashboard Rendering across all reruns (e.g. Chat Input submits)
+        if st.session_state.analysis_results is not None:
+            results = st.session_state.analysis_results
+            top_breed_formatted = results["top_breed_formatted"]
+            top_breeds = results["top_breeds"]
+            top_scores = results["top_scores"]
+            gradcam_explanation_image = results["gradcam_explanation_image"]
+            input_image = results["image"]
             top_score_pct = float(top_scores[0]) * 100
 
+            # Top Prediction Hero Card
             st.markdown(
                 f"""
                 <div style="background: linear-gradient(135deg, #4F46E5 0%, #6366F1 50%, #8B5CF6 100%); backdrop-filter: blur(16px); border-radius: 26px; padding: 2.25rem; color: white; box-shadow: 0 20px 45px -10px rgba(79, 70, 229, 0.4); margin-top: 1.5rem; margin-bottom: 2rem; position: relative; overflow: hidden;">
                     <div style="position: absolute; right: -15px; bottom: -25px; font-size: 10rem; opacity: 0.12; user-select: none; pointer-events: none;">🐕</div>
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
                         <div style="background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.3); padding: 0.35rem 1rem; border-radius: 50px; font-size: 0.85rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;">
-                            🏆 Top Prediction
+                            🏆 Top AI Classification
                         </div>
                         <div style="background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.3); padding: 0.35rem 1rem; border-radius: 50px; font-size: 0.85rem; font-weight: 700;">
                             Confidence Score: {top_score_pct:.1f}%
@@ -609,49 +613,232 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
-            # Top 5 Predictions Section
-            st.markdown(
-                """
-                <div style="margin-bottom: 1.25rem; margin-top: 1rem;">
-                    <h3 style="font-size: 1.35rem; font-weight: 800; color: #0F172A; margin-bottom: 0.25rem;">
-                        📊 Top 5 Predictions
-                    </h3>
-                    <p style="font-size: 0.9rem; color: #64748B; margin: 0;">Probability distribution across top candidates</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            # Executive AI Dashboard Tabs
+            tab_vision, tab_info, tab_chat = st.tabs([
+                "📊 Vision & Grad-CAM Explanation",
+                "✨ Gemini Breed Intelligence",
+                f"💬 AI Assistant ({top_breed_formatted})",
+            ])
 
-            badge_colors = [
-                "linear-gradient(135deg, #6366F1, #4F46E5)",
-                "linear-gradient(135deg, #8B5CF6, #7C3AED)",
-                "linear-gradient(135deg, #06B6D4, #0891B2)",
-                "linear-gradient(135deg, #64748B, #475569)",
-                "linear-gradient(135deg, #94A3B8, #64748B)",
-            ]
+            # ------------------------------------------------------------------
+            # TAB 1: Vision Analysis & Grad-CAM Heatmap + Top 5 Predictions
+            # ------------------------------------------------------------------
+            with tab_vision:
+                col_tab1_left, col_tab1_right = st.columns([1.1, 0.9], gap="large")
 
-            for i, (breed_raw, score) in enumerate(zip(top_breeds, top_scores), 1):
-                breed_fmt = str(breed_raw).replace("_", " ").title()
-                pct = float(score) * 100
-                badge_bg = badge_colors[min(i - 1, len(badge_colors) - 1)]
-
-                st.markdown(
-                    f"""
-                    <div class="glass-card" style="padding: 1.15rem 1.5rem; margin-bottom: 0.75rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem; flex-wrap: wrap; gap: 0.5rem;">
-                            <div style="display: flex; align-items: center; gap: 0.85rem;">
-                                <span style="background: {badge_bg}; color: white; font-weight: 800; font-size: 0.85rem; padding: 0.3rem 0.75rem; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.08);">#{i}</span>
-                                <span style="font-size: 1.1rem; font-weight: 700; color: #1E293B;">{breed_fmt}</span>
-                            </div>
-                            <div style="font-size: 0.95rem; font-weight: 800; color: #4F46E5; background: rgba(99, 102, 241, 0.08); padding: 0.3rem 0.85rem; border-radius: 10px;">
-                                {pct:.1f}%
-                            </div>
+                with col_tab1_left:
+                    st.markdown(
+                        """
+                        <div style="margin-bottom: 1rem;">
+                            <h4 style="font-size: 1.2rem; font-weight: 800; color: #0F172A; margin-bottom: 0.2rem; display: flex; align-items: center; gap: 0.4rem;">
+                                🔥 Why the AI Predicted This Breed
+                            </h4>
+                            <p style="font-size: 0.875rem; color: #64748B; margin: 0;">
+                                Grad-CAM spatial activation map highlighting key feature regions
+                            </p>
                         </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                    col_g1, col_g2 = st.columns(2, gap="medium")
+                    with col_g1:
+                        st.markdown(
+                            """
+                            <div class="glass-card" style="padding: 1rem; text-align: center; margin-bottom: 0;">
+                                <div style="font-size: 0.85rem; font-weight: 700; color: #475569; margin-bottom: 0.5rem;">
+                                    📸 Original Input
+                                </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                        st.image(input_image, use_container_width=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    with col_g2:
+                        st.markdown(
+                            """
+                            <div class="glass-card" style="padding: 1rem; text-align: center; margin-bottom: 0;">
+                                <div style="font-size: 0.85rem; font-weight: 700; color: #475569; margin-bottom: 0.5rem;">
+                                    🔥 Grad-CAM Heatmap
+                                </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                        st.image(gradcam_explanation_image, use_container_width=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                with col_tab1_right:
+                    st.markdown(
+                        """
+                        <div style="margin-bottom: 1rem;">
+                            <h4 style="font-size: 1.2rem; font-weight: 800; color: #0F172A; margin-bottom: 0.2rem; display: flex; align-items: center; gap: 0.4rem;">
+                                📊 Top 5 Predictions Distribution
+                            </h4>
+                            <p style="font-size: 0.875rem; color: #64748B; margin: 0;">
+                                Classification probability scores across top candidates
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                    badge_colors = [
+                        "linear-gradient(135deg, #6366F1, #4F46E5)",
+                        "linear-gradient(135deg, #8B5CF6, #7C3AED)",
+                        "linear-gradient(135deg, #06B6D4, #0891B2)",
+                        "linear-gradient(135deg, #64748B, #475569)",
+                        "linear-gradient(135deg, #94A3B8, #64748B)",
+                    ]
+
+                    for i, (breed_raw, score) in enumerate(zip(top_breeds, top_scores), 1):
+                        breed_fmt = format_breed_name(breed_raw)
+                        pct = float(score) * 100
+                        badge_bg = badge_colors[min(i - 1, len(badge_colors) - 1)]
+
+                        st.markdown(
+                            f"""
+                            <div class="glass-card" style="padding: 1rem 1.25rem; margin-bottom: 0.65rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.4rem;">
+                                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                        <span style="background: {badge_bg}; color: white; font-weight: 800; font-size: 0.8rem; padding: 0.25rem 0.65rem; border-radius: 10px;">#{i}</span>
+                                        <span style="font-size: 1.05rem; font-weight: 700; color: #1E293B;">{breed_fmt}</span>
+                                    </div>
+                                    <div style="font-size: 0.9rem; font-weight: 800; color: #4F46E5; background: rgba(99, 102, 241, 0.08); padding: 0.25rem 0.75rem; border-radius: 10px;">
+                                        {pct:.1f}%
+                                    </div>
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                        st.progress(float(score))
+
+            # ------------------------------------------------------------------
+            # TAB 2: Gemini Breed Intelligence Cards
+            # ------------------------------------------------------------------
+            with tab_info:
+                st.markdown(
+                    """
+                    <div style="margin-bottom: 1.25rem;">
+                        <h4 style="font-size: 1.2rem; font-weight: 800; color: #0F172A; margin-bottom: 0.2rem; display: flex; align-items: center; gap: 0.4rem;">
+                            ✨ Gemini AI Breed Attributes & Care Guide
+                        </h4>
+                        <p style="font-size: 0.875rem; color: #64748B; margin: 0;">
+                            Comprehensive breed facts, characteristics, physical metrics, and health overview
+                        </p>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
-                st.progress(float(score))
+
+                breed_info_dict, info_error = get_breed_info(top_breed_formatted)
+
+                if info_error:
+                    st.warning(info_error)
+                elif breed_info_dict:
+                    field_icons = {
+                        "Origin": "🌍",
+                        "Lifespan": "⏳",
+                        "Weight": "⚖️",
+                        "Height": "📏",
+                        "Temperament": "🧠",
+                        "Exercise": "🏃",
+                        "Diet": "🍖",
+                        "Grooming": "✂️",
+                        "Health Issues": "🏥",
+                        "Interesting Fact": "💡",
+                    }
+
+                    items = list(breed_info_dict.items())
+                    for idx in range(0, len(items), 2):
+                        col_i1, col_i2 = st.columns(2, gap="medium")
+
+                        with col_i1:
+                            key1, val1 = items[idx]
+                            icon1 = field_icons.get(key1, "📌")
+                            st.markdown(
+                                f"""
+                                <div class="glass-card" style="padding: 1.25rem; height: 100%;">
+                                    <div style="font-size: 0.95rem; font-weight: 800; color: #4F46E5; margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.5rem;">
+                                        <span style="font-size: 1.2rem;">{icon1}</span> {key1}
+                                    </div>
+                                    <div style="font-size: 0.95rem; color: #1E293B; font-weight: 600; line-height: 1.5;">
+                                        {val1}
+                                    </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
+                        if idx + 1 < len(items):
+                            with col_i2:
+                                key2, val2 = items[idx + 1]
+                                icon2 = field_icons.get(key2, "📌")
+                                st.markdown(
+                                    f"""
+                                    <div class="glass-card" style="padding: 1.25rem; height: 100%;">
+                                        <div style="font-size: 0.95rem; font-weight: 800; color: #4F46E5; margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.5rem;">
+                                            <span style="font-size: 1.2rem;">{icon2}</span> {key2}
+                                        </div>
+                                        <div style="font-size: 0.95rem; color: #1E293B; font-weight: 600; line-height: 1.5;">
+                                            {val2}
+                                        </div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+
+            # ------------------------------------------------------------------
+            # TAB 3: Interactive Gemini AI Chat Assistant
+            # ------------------------------------------------------------------
+            with tab_chat:
+                st.markdown(
+                    f"""
+                    <div style="margin-bottom: 1.25rem;">
+                        <h4 style="font-size: 1.2rem; font-weight: 800; color: #0F172A; margin-bottom: 0.2rem; display: flex; align-items: center; gap: 0.4rem;">
+                            💬 Interactive AI Assistant for {top_breed_formatted}
+                        </h4>
+                        <p style="font-size: 0.875rem; color: #64748B; margin: 0;">
+                            Ask questions regarding care, apartment living, training, or temperament for {top_breed_formatted}
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                if not st.session_state.chat_history:
+                    st.info(
+                        f"💡 **Suggested Questions**: *'Is a {top_breed_formatted} good for apartment living?'*, *'How much exercise do they need?'*, or *'Are they good with kids and other pets?'*"
+                    )
+
+                # Render message history
+                for msg in st.session_state.chat_history:
+                    with st.chat_message(msg["role"]):
+                        st.write(msg["content"])
+
+                # Single Streamlit chat_input component
+                if user_prompt := st.chat_input(f"Ask any question about {top_breed_formatted}..."):
+                    # Instantly render user message
+                    with st.chat_message("user"):
+                        st.write(user_prompt)
+
+                    # Query Gemini AI and render response
+                    with st.chat_message("assistant"):
+                        with st.spinner(f"Consulting AI Canine Expert regarding {top_breed_formatted}..."):
+                            ai_reply, chat_error = chat_with_breed_expert(
+                                breed_name=top_breed_formatted,
+                                conversation_history=st.session_state.chat_history,
+                                user_message=user_prompt,
+                            )
+
+                            if chat_error:
+                                st.warning(chat_error)
+                            elif ai_reply:
+                                st.write(ai_reply)
+                                st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+                                st.session_state.chat_history.append({"role": "assistant", "content": ai_reply})
+                                st.rerun()
 
     else:
         # Empty State
@@ -667,6 +854,8 @@ def main() -> None:
                     <span>✦ Supports JPG, JPEG, PNG</span>
                     <span>✦ 120+ Dog Breeds</span>
                     <span>✦ Instant Deep Learning Prediction</span>
+                    <span>✦ Grad-CAM Heatmaps</span>
+                    <span>✦ Gemini AI Intelligence</span>
                 </div>
             </div>
             """,
@@ -686,6 +875,8 @@ def main() -> None:
                 <span style="background: rgba(6, 182, 212, 0.1); color: #0891B2; padding: 0.2rem 0.65rem; border-radius: 8px; font-size: 0.8rem;">MobileNetV2</span>
                 <span>•</span>
                 <span style="background: rgba(244, 63, 94, 0.1); color: #E11D48; padding: 0.2rem 0.65rem; border-radius: 8px; font-size: 0.8rem;">Streamlit</span>
+                <span>•</span>
+                <span style="background: rgba(16, 185, 129, 0.1); color: #059669; padding: 0.2rem 0.65rem; border-radius: 8px; font-size: 0.8rem;">Google Gemini</span>
             </div>
             <p style="margin: 0; font-weight: 500;">Made with ❤️ by <strong>Shlok Yadav</strong></p>
         </div>
