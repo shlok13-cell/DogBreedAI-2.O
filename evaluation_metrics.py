@@ -122,7 +122,7 @@ def create_data_batches(
 def load_keras_model(model_path: str = MODEL_PATH) -> tf.keras.Model:
     """Load the saved Keras model that was trained with TensorFlow Hub."""
 
-    return tf.keras.models.load_model(model_path, custom_objects={"KerasLayer": hub.KerasLayer})
+    return tf.keras.models.load_model(model_path, custom_objects={"KerasLayer": hub.KerasLayer}, compile=False)
 
 
 def prepare_validation_dataset(num_images: Optional[int] = NUM_IMAGES) -> tuple[tf.data.Dataset, np.ndarray]:

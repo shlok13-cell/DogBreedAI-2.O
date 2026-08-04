@@ -64,6 +64,7 @@ def load_model_and_labels(
     model = keras.models.load_model(
         model_path,
         custom_objects=custom_objects,
+        compile=False,
     )
     breeds = np.load(breeds_path, allow_pickle=True)
     return model, breeds
