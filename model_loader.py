@@ -24,12 +24,31 @@ import numpy as np
 import streamlit as st
 import tensorflow_hub as hub
 import tf_keras as keras
+import tf_keras.layers as tf_layers
 
-from utils import BREEDS_PATH, MODEL_PATH
-
-# Pre-register KerasLayer in global custom object registries
+# Pre-register KerasLayer in both tf_keras and standard Keras global custom object registries
 keras.utils.get_custom_objects()["KerasLayer"] = hub.KerasLayer
 keras.utils.get_custom_objects()["keras_layer"] = hub.KerasLayer
+
+try:
+    import keras as _k3
+    _k3.utils.get_custom_objects()["KerasLayer"] = hub.KerasLayer
+    _k3.utils.get_custom_objects()["keras_layer"] = hub.KerasLayer
+except Exception:
+    pass
+
+# Patch InputLayer.from_config to strip Keras 3 'optional' argument if present
+_orig_input_from_config = tf_layers.InputLayer.from_config
+def _patched_input_from_config(config):
+    if isinstance(config, dict):
+        config.pop("optional", None)
+    return _orig_input_from_config(config)
+tf_layers.InputLayer.from_config = _patched_input_from_config
+
+# MobileNetV2 feature vector URL used during model training
+HUB_MODULE_URL = "https://tfhub.dev/google/imagenet/mobilenet_v2_140_224/feature_vector/5"
+
+from utils import BREEDS_PATH, MODEL_PATH
 
 
 @st.cache_resource(show_spinner=True)
@@ -45,6 +64,12 @@ def load_model_and_labels(
         raise FileNotFoundError(
             f"Breed label file not found at {breeds_path}. Train and save the model by running main.py first."
         )
+
+    # Ensure MobileNetV2 TF-Hub module weights are downloaded and cached before deserialization
+    try:
+        _ = hub.KerasLayer(HUB_MODULE_URL, trainable=False)
+    except Exception:
+        pass
 
     custom_objects = {
         "KerasLayer": hub.KerasLayer,
