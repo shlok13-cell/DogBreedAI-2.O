@@ -12,11 +12,22 @@ load_dotenv()
 
 
 def get_gemini_api_key() -> Optional[str]:
-    """Retrieve GEMINI_API_KEY from environment variables.
+    """Retrieve GEMINI_API_KEY from Streamlit secrets or environment variables.
 
     Returns:
         Optional[str]: API key string if present and configured, else None.
     """
+    # Check Streamlit Cloud Secrets first
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
+            key = st.secrets["GEMINI_API_KEY"]
+            if key and str(key).strip() and "your_gemini_api_key" not in str(key).lower():
+                return str(key).strip()
+    except Exception:
+        pass
+
+    # Fallback to system environment variable / .env file
     key = os.getenv("GEMINI_API_KEY")
     if not key or not key.strip() or "your_gemini_api_key" in key.lower():
         return None
@@ -38,7 +49,7 @@ def get_breed_info(breed_name: str) -> Tuple[Optional[Dict[str, str]], Optional[
     if not api_key:
         return (
             None,
-            "🔑 **GEMINI_API_KEY Not Configured**: Please set your API key in the `.env` file to enable AI breed insights.",
+            "🔑 **GEMINI_API_KEY Not Configured**: Please set your API key in `.env` (locally) or Streamlit Cloud Secrets under **Manage App -> Settings -> Secrets** (`GEMINI_API_KEY = \"your_api_key\"`).",
         )
 
     prompt = get_breed_info_prompt(breed_name)
@@ -115,7 +126,7 @@ def chat_with_breed_expert(
     if not api_key:
         return (
             None,
-            "🔑 **GEMINI_API_KEY Not Configured**: Please set your API key in `.env` to chat with the AI assistant.",
+            "🔑 **GEMINI_API_KEY Not Configured**: Please set your API key in `.env` (locally) or Streamlit Cloud Secrets under **Manage App -> Settings -> Secrets**.",
         )
 
     system_instruction = (
