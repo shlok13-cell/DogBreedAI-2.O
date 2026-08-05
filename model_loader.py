@@ -76,7 +76,7 @@ def load_model_and_labels(
             keras.layers.Dense(len(breeds), activation="softmax"),
         ])
         model.build([None, 224, 224, 3])
-        model.load_weights(model_path)
+        model.load_weights(model_path, skip_mismatch=True)
     except Exception:
         # Fallback to standard load_model if needed
         custom_objects = {
