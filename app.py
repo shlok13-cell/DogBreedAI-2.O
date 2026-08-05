@@ -26,7 +26,7 @@ os.environ["TF_USE_LEGACY_KERAS"] = "1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 
 from gemini_service import chat_with_breed_expert, get_breed_info
 from gradcam import generate_gradcam_explanation
@@ -483,7 +483,7 @@ def main() -> None:
     )
 
     if uploaded_file is not None:
-        image = Image.open(uploaded_file)
+        image = ImageOps.exif_transpose(Image.open(uploaded_file))
         
         # Track uploaded file state to clear session state only when a new image is selected
         current_file_id = f"{uploaded_file.name}_{uploaded_file.size}"

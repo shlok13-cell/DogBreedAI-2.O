@@ -1,11 +1,9 @@
 streamlit
 starlette<1.4.0
-tensorflow==2.15.1
-tf-keras==2.15.0
+tensorflow==2.21.0
+tf-keras==2.21.0
 tensorflow-hub==0.16.1
-setuptools==69.5.1
-packaging
-numpy<2.0.0
+numpy
 pandas
 pillow
 matplotlib
