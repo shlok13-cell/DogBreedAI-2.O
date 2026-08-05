@@ -4,16 +4,20 @@ import os
 # Enable legacy Keras (Keras 2) compatibility – prevents 'optional' arg errors
 os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
-# Fallback shim for pkg_resources required by tensorflow_hub
+import sys
+import types
 try:
     import pkg_resources
 except ImportError:
-    import sys
-    import types
-    from packaging import version
-    _pkg_resources = types.ModuleType("pkg_resources")
-    _pkg_resources.parse_version = version.parse
-    sys.modules["pkg_resources"] = _pkg_resources
+    try:
+        from packaging import version
+        _parse_v = version.parse
+    except ImportError:
+        _parse_v = lambda v: v
+    _pkg_res = types.ModuleType("pkg_resources")
+    _pkg_res.parse_version = _parse_v
+    _pkg_res.PackagingVersion = _parse_v
+    sys.modules["pkg_resources"] = _pkg_res
 
 from typing import Tuple
 import numpy as np

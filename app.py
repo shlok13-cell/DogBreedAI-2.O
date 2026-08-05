@@ -4,6 +4,23 @@ Run with:
     streamlit run app.py
 """
 
+import sys
+import types
+
+# Shim pkg_resources for tensorflow_hub compatibility if missing
+try:
+    import pkg_resources
+except ImportError:
+    try:
+        from packaging import version
+        _parse_v = version.parse
+    except ImportError:
+        _parse_v = lambda v: v
+    _pkg_res = types.ModuleType("pkg_resources")
+    _pkg_res.parse_version = _parse_v
+    _pkg_res.PackagingVersion = _parse_v
+    sys.modules["pkg_resources"] = _pkg_res
+
 import os
 os.environ["TF_USE_LEGACY_KERAS"] = "1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
