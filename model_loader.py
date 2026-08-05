@@ -1,7 +1,7 @@
 """Model loading utilities for the Dog Breed Classifier."""
 
 import os
-# Enable legacy Keras (Keras 2) compatibility – prevents 'optional' arg errors
+# Enable legacy Keras (Keras 2) compatibility
 os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
 import sys
@@ -65,22 +65,30 @@ def load_model_and_labels(
             f"Breed label file not found at {breeds_path}. Train and save the model by running main.py first."
         )
 
-    # Ensure MobileNetV2 TF-Hub module weights are downloaded and cached before deserialization
-    try:
-        _ = hub.KerasLayer(HUB_MODULE_URL, trainable=False)
-    except Exception:
-        pass
-
-    custom_objects = {
-        "KerasLayer": hub.KerasLayer,
-        "keras_layer": hub.KerasLayer,
-        "hub>KerasLayer": hub.KerasLayer,
-        "tensorflow_hub>KerasLayer": hub.KerasLayer,
-    }
-    model = keras.models.load_model(
-        model_path,
-        custom_objects=custom_objects,
-        compile=False,
-    )
     breeds = np.load(breeds_path, allow_pickle=True)
+
+    # Reconstruct exact Sequential model architecture with TF-Hub MobileNetV2 feature extractor and load weights
+    # This guarantees cross-version compatibility between Keras 2 / Keras 3 and avoids KerasLayer deserialization bugs
+    try:
+        model = keras.Sequential([
+            hub.KerasLayer(HUB_MODULE_URL, trainable=False),
+            keras.layers.Dropout(0.2),
+            keras.layers.Dense(len(breeds), activation="softmax"),
+        ])
+        model.build([None, 224, 224, 3])
+        model.load_weights(model_path)
+    except Exception:
+        # Fallback to standard load_model if needed
+        custom_objects = {
+            "KerasLayer": hub.KerasLayer,
+            "keras_layer": hub.KerasLayer,
+            "hub>KerasLayer": hub.KerasLayer,
+            "tensorflow_hub>KerasLayer": hub.KerasLayer,
+        }
+        model = keras.models.load_model(
+            model_path,
+            custom_objects=custom_objects,
+            compile=False,
+        )
+
     return model, breeds
