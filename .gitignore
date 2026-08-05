@@ -53,7 +53,6 @@ venv.bak/
 
 # Model files (large)
 *.keras
-!dog_breed_model.keras
 *.h5
 *.pkl
 *.pickle
@@ -65,7 +64,6 @@ checkpoints/
 # Data files
 *.csv
 *.npy
-!dog_breeds.npy
 *.npz
 data/
 datasets/

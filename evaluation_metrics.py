@@ -13,27 +13,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-# Fallback shim for pkg_resources required by tensorflow_hub
-try:
-    import pkg_resources
-except ImportError:
-    import sys
-    import types
-    from packaging import version
-    _pkg_resources = types.ModuleType("pkg_resources")
-    _pkg_resources.parse_version = version.parse
-    sys.modules["pkg_resources"] = _pkg_resources
-
 import tensorflow_hub as hub
-import tf_keras.layers as tf_layers
-
-# Patch InputLayer.from_config to strip Keras 3 specific arguments ('optional') for backward compatibility
-_orig_input_from_config = tf_layers.InputLayer.from_config
-def _patched_input_from_config(config):
-    if isinstance(config, dict):
-        config = {k: v for k, v in config.items() if k != "optional"}
-    return _orig_input_from_config(config)
-tf_layers.InputLayer.from_config = _patched_input_from_config
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -122,7 +102,7 @@ def create_data_batches(
 def load_keras_model(model_path: str = MODEL_PATH) -> tf.keras.Model:
     """Load the saved Keras model that was trained with TensorFlow Hub."""
 
-    return tf.keras.models.load_model(model_path, custom_objects={"KerasLayer": hub.KerasLayer}, compile=False)
+    return tf.keras.models.load_model(model_path, custom_objects={"KerasLayer": hub.KerasLayer})
 
 
 def prepare_validation_dataset(num_images: Optional[int] = NUM_IMAGES) -> tuple[tf.data.Dataset, np.ndarray]:
